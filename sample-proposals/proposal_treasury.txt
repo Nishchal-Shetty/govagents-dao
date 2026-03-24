@@ -1,0 +1,35 @@
+PROPOSAL #004 — Liquidity Mining Program: 15% Treasury Allocation over 6 Months
+
+Summary
+-------
+Allocate 15% of the DAO treasury (approximately 63,000 USDC at current balance of
+420,000 USDC) to a six-month liquidity mining program on Uniswap v3, targeting
+the GOV/USDC pair at the 0.3% fee tier. Rewards are distributed weekly via a
+MasterChef-style staking contract deployed at a new audited address.
+
+Program Parameters
+------------------
+- Total reward budget : 63,000 USDC disbursed in 26 equal weekly tranches
+- Target pool        : Uniswap v3 GOV/USDC, 0.3% fee tier
+- Price range        : ±20% around the 7-day TWAP at program start
+- Minimum lock-up    : 7 days per LP position to qualify for rewards
+- Reward token       : USDC (no new GOV token minting)
+- Staking contract   : to be deployed and audited before the start block
+
+Risk Controls
+-------------
+- A 3-of-5 treasury multisig must sign each weekly disbursement transaction.
+- An independent on-chain oracle (Chainlink GOV/USD) guards against price
+  manipulation; rewards are paused if spot price deviates >30% from TWAP.
+- Unspent USDC after week 26 is automatically returned to the treasury.
+- A governance vote is required to extend or modify the program beyond month 6.
+
+Accountability
+--------------
+The proposer will publish weekly TVL, volume, and fee-revenue reports to the DAO
+forum. If cumulative protocol fee revenue attributable to the program does not
+reach 20,000 USDC by month 3, the DAO may vote to terminate early.
+
+Voting Period  : 96 hours
+Quorum Required: 15% of total token supply
+Passing Threshold: Simple majority (>50% weighted Yes)

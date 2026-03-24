@@ -1,0 +1,46 @@
+PROPOSAL #005 — Upgrade Voting Contract to Quadratic Voting with Weight Migration
+
+Summary
+-------
+Replace the current linear token-weighted voting mechanism in GovernanceV1.sol
+with a quadratic model where effective_votes = floor(sqrt(token_balance)).
+The upgrade uses the existing UUPS proxy pattern; all stored vote weights will
+be migrated via a one-time on-chain migration script before the upgrade takes
+effect at block N+50,400 (approximately 7 days after passage).
+
+Motivation
+----------
+Under the current model, a single wallet holding 10,000 GOV tokens casts 100×
+the votes of a wallet holding 100 tokens, suppressing minority participation.
+Quadratic voting reduces this ratio to approximately 10×, broadening effective
+governance representation without changing token economics.
+
+Technical Specification
+-----------------------
+- Proxy pattern     : UUPS (ERC-1967), upgradeToAndCall() with reinitializer(2)
+- New formula       : votes(addr) = floor(sqrt(balanceOf(addr) * 1e18)) / 1e9
+- Storage layout    : GovernanceV2 appends only; no existing slots are relocated
+- Migration script  : /scripts/migrate_weights.js reads balances at snapshot
+  block N and writes a packed mapping to the new contract via batchMigrate()
+- Snapshot block    : the block immediately preceding the upgrade transaction
+
+Security Requirements
+---------------------
+- GovernanceV2.sol must receive a passing audit from a named third-party firm.
+- A 7-day time-lock enforced by TimelockController (0xTimeLock) must elapse
+  between the upgrade transaction being queued and executed.
+- The 4-of-7 core-team multisig must co-sign the upgradeToAndCall() call.
+- Flash-loan governance attacks are mitigated by requiring votes to be cast
+  from balances held for at least one full epoch (7 days) prior to proposal
+  creation.
+
+Rollback Plan
+-------------
+If a critical bug is found within 14 days of deployment, the 4-of-7 multisig
+may invoke upgradeTo(GovernanceV1Address) to revert to the previous logic.
+Migrated vote-weight data is preserved in a separate mapping and is unaffected
+by a rollback.
+
+Voting Period  : 120 hours
+Quorum Required: 20% of total token supply
+Passing Threshold: Supermajority (>66% weighted Yes)

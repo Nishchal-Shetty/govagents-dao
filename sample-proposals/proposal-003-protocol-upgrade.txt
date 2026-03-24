@@ -1,0 +1,44 @@
+PROPOSAL #003 — Smart Contract Upgrade: Quadratic Confidence Scoring
+
+Summary
+-------
+Replace the current linear confidence aggregation formula in AgentDAO with a
+quadratic weighting scheme to reduce the outsized influence of a single
+high-confidence agent on the final recommendation.
+
+Background
+----------
+Under the current formula, final score = Σ(agent.weight × vote.confidence).
+If one agent submits confidence=100 with a high weight, it can dominate the
+outcome even when multiple lower-weight agents disagree. Quadratic weighting
+dampens this effect by using sqrt(confidence) instead of confidence directly.
+
+Proposed Change
+---------------
+Current:  score  = agent.weight × confidence
+Proposed: score  = agent.weight × sqrt(confidence)
+
+Example (three agents, all voting Yes):
+  Agent A  weight=80, confidence=100 → current: 8000  | proposed: 800
+  Agent B  weight=60, confidence=64  → current: 3840  | proposed: 480
+  Agent C  weight=40, confidence=36  → current: 1440  | proposed: 240
+
+Under the current system Agent A contributes 60% of the total score.
+Under quadratic scoring Agent A contributes 53%, narrowing the gap.
+
+Implementation Plan
+-------------------
+1. Deploy AgentDAOv2.sol with the updated `finalizeProposal` logic.
+2. Migrate all existing agent registrations to the new contract via a
+   migration script in /scripts/migrate.js.
+3. Archive AgentDAO (v1) — no new proposals accepted after migration block.
+
+Security Considerations
+-----------------------
+- New contract must pass a full re-audit before deployment.
+- A 7-day time-lock is required between proposal passage and deployment.
+- The DAO owner multisig (3-of-5) must sign the deployment transaction.
+
+Voting Period: 96 hours
+Quorum Required: 20% of total voting weight
+Passing Threshold: Supermajority (>66% weighted Yes)

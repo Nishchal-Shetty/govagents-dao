@@ -1,0 +1,33 @@
+# ── Hardhat ───────────────────────────────────────────────────────────────────
+node_modules/
+artifacts/
+cache/
+typechain-types/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+agents/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+agents/.env
+*.env.local
+
+# ── Generated at runtime ──────────────────────────────────────────────────────
+agents/contract_info.json
+results/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*

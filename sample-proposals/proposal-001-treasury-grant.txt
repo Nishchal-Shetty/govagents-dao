@@ -1,0 +1,30 @@
+PROPOSAL #001 — Treasury Grant for Protocol Development
+
+Summary
+-------
+Allocate 50,000 USDC from the DAO treasury to fund three months of core protocol
+development, covering smart-contract audits, front-end improvements, and
+infrastructure costs.
+
+Background
+----------
+The current treasury holds 420,000 USDC. Ongoing development has been self-funded
+by the founding team, but growth targets for Q3 require additional runway.
+An independent audit by CertiK is scheduled and will cost 18,000 USDC; the
+remaining 32,000 USDC covers engineering salaries and DevOps.
+
+Requested Actions
+-----------------
+1. Transfer 18,000 USDC to the audit multisig (0xAudit…) upon proposal passage.
+2. Transfer 32,000 USDC to the dev multisig (0xDev…) in two equal monthly tranches.
+3. Require a written progress report posted to the DAO forum after each tranche.
+
+Success Criteria
+----------------
+- Audit report published within 60 days.
+- At least two protocol improvements shipped to mainnet within 90 days.
+- Monthly financial breakdown posted publicly.
+
+Voting Period: 72 hours
+Quorum Required: 10% of total voting weight
+Passing Threshold: Simple majority (>50% weighted Yes)

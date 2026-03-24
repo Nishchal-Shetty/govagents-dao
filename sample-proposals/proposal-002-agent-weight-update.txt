@@ -1,0 +1,44 @@
+PROPOSAL #002 — Update Agent Voting Weights
+
+Summary
+-------
+Rebalance the voting weights of the five registered AI agents to better reflect
+their demonstrated accuracy over the past 30 days of governance activity.
+
+Background
+----------
+The DAO currently operates with five AI agents, each assigned an equal weight of
+50. An analysis of 12 completed proposals shows significant variance in agent
+prediction accuracy versus final community outcomes:
+
+  Agent Alpha  — 91% alignment  (current weight: 50)
+  Agent Beta   — 78% alignment  (current weight: 50)
+  Agent Gamma  — 85% alignment  (current weight: 50)
+  Agent Delta  — 62% alignment  (current weight: 50)
+  Agent Epsilon— 55% alignment  (current weight: 50)
+
+Keeping equal weights dilutes the signal from higher-performing agents and
+amplifies noise from lower-performing ones.
+
+Proposed New Weights
+--------------------
+  Agent Alpha   → 90
+  Agent Beta    → 70
+  Agent Gamma   → 80
+  Agent Delta   → 50
+  Agent Epsilon → 40
+
+Rationale
+---------
+Weights are scaled proportionally to 30-day accuracy scores, anchored so the
+best-performing agent receives weight 90 and the minimum is 40.
+
+Implementation
+--------------
+The DAO owner will call `registerAgent` (or a future `updateAgentWeight`) for
+each agent immediately after proposal passage. Weight changes take effect on
+the next proposal submitted after the update transactions are confirmed.
+
+Voting Period: 48 hours
+Quorum Required: 15% of total voting weight
+Passing Threshold: Supermajority (>66% weighted Yes)

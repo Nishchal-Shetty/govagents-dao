@@ -1,0 +1,45 @@
+PROPOSAL #006 — Grant Emergency Pause Authority to 3-of-5 Security Multisig
+
+Summary
+-------
+Introduce a PAUSER_ROLE into the protocol's AccessControl registry and assign it
+to a newly created 3-of-5 Gnosis Safe multisig (0xPauserSafe). Role holders may
+call pause() on the four highest-value protocol contracts — LiquidityPool,
+StakingVault, GovernanceV1, and BridgeAdapter — but may not modify parameters,
+upgrade logic, or access treasury funds.
+
+Multisig Composition
+--------------------
+The five keyholders are drawn from distinct operational teams to prevent
+collusion: two core engineers, one security researcher, one external auditor
+partner, and one elected community representative (term: 6 months, renewable).
+No single entity may hold more than one key.
+
+Pause Mechanics
+---------------
+- Trigger   : Any 3-of-5 signers may initiate a pause with a signed on-chain
+  transaction; no off-chain coordination is sufficient.
+- Scope     : pause() suspends deposit, withdrawal, and vote-casting functions.
+  Read-only views and existing queued timelock operations are unaffected.
+- Auto-expiry: A paused state automatically lifts after 72 hours unless a full
+  DAO governance vote (quorum: 10%, simple majority) explicitly extends it.
+- Unpause   : Any 3-of-5 signers may unpause before the 72-hour expiry.
+  The DAO may also force-unpause via governance vote at any time.
+
+Accountability
+--------------
+Within 24 hours of any pause event, the multisig must publish a public
+incident report detailing the threat, evidence, and remediation timeline.
+Failure to publish forfeits the PAUSER_ROLE pending a DAO re-vote.
+All pause and unpause transactions are emitted as indexed on-chain events and
+visible in the protocol's public dashboard.
+
+Limitations
+-----------
+PAUSER_ROLE explicitly does NOT grant: upgrade authority, fund movement,
+parameter changes, or the ability to pause the DAO's own voting contract.
+Granting any of these additional capabilities requires a separate proposal.
+
+Voting Period  : 72 hours
+Quorum Required: 20% of total token supply
+Passing Threshold: Supermajority (>66% weighted Yes)
