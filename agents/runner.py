@@ -14,7 +14,7 @@ Steps
 5. Print each verdict live as it arrives.
 6. Wait for all three votes; the contract auto-finalises on the third.
 7. Read the final on-chain recommendation from getFinalRecommendation().
-8. Print a formatted terminal summary.
+8. Print a formatted terminal summary, or JSON when --json is set.
 9. Save full results to /results/proposal_<id>_results.json.
 
 Usage examples
@@ -28,7 +28,10 @@ Usage examples
   # Analyze only — no Hardhat node needed
   python runner.py --file proposal-001-treasury-grant.txt --dry-run
 
-  # Suppress ANSI colours (useful in CI)
+  # Machine-readable JSON output (CI-friendly)
+  python runner.py --file proposal-001-treasury-grant.txt --dry-run --json
+
+  # Suppress ANSI colours
   python runner.py --file proposal-001-treasury-grant.txt --no-color
 
 Environment variables (agents/.env)
@@ -81,7 +84,6 @@ _COLOUR_ENABLED = True  # toggled by --no-color
 
 
 def _c(code: str, text: str) -> str:
-    """Wrap *text* in an ANSI escape sequence when colours are enabled."""
     return f"\033[{code}m{text}\033[0m" if _COLOUR_ENABLED else text
 
 
@@ -95,7 +97,6 @@ def _white(t: str)  -> str: return _c("1;37",  t)
 
 
 def _colour_rec(label: str) -> str:
-    """Apply role-appropriate colour to a recommendation label."""
     return {"APPROVE": _green, "REJECT": _red, "REVISE": _yellow}.get(
         label.upper(), _white
     )(label.upper())
@@ -112,6 +113,7 @@ def _parse_args() -> argparse.Namespace:
               python runner.py --title "Grant" --description "Allocate 50k USDC..."
               python runner.py --file proposal-001-treasury-grant.txt
               python runner.py --file proposal-001-treasury-grant.txt --dry-run
+              python runner.py --file proposal-001-treasury-grant.txt --dry-run --json
               python runner.py --file /tmp/custom.txt --no-color
         """),
     )
@@ -142,6 +144,15 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Run Claude analysis but skip all on-chain transactions. "
             "No Hardhat node or deployed contract required."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help=(
+            "Print results as a JSON object to stdout instead of the "
+            "ANSI terminal summary. Useful for CI pipelines and scripting."
         ),
     )
     parser.add_argument(
@@ -179,7 +190,7 @@ def _parse_proposal_file(path: Path) -> tuple[str, str]:
     if not path.exists():
         _fatal(f"Proposal file not found: {path}")
 
-    text = path.read_text(encoding="utf-8")
+    text  = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
     first_idx = next((i for i, l in enumerate(lines) if l.strip()), None)
@@ -198,7 +209,6 @@ def _parse_proposal_file(path: Path) -> tuple[str, str]:
 
 
 def _load_proposal(args: argparse.Namespace) -> tuple[str, str]:
-    """Return (title, description) from CLI args or file."""
     if args.file:
         path = _resolve_proposal_file(args.file)
         logger.info("Loading proposal from %s", path)
@@ -279,12 +289,6 @@ def _agent_pipeline(
     description: str,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """
-    Full per-agent pipeline executed concurrently in a thread-pool worker.
-
-    When *dry_run* is True, skips the on-chain ``submitVote`` call and leaves
-    ``vote_tx`` / ``vote_block`` as None.
-    """
     result: dict[str, Any] = {
         "role":           agent.role,
         "address":        agent.address,
@@ -349,17 +353,19 @@ def _run_agents_parallel(
     title: str,
     description: str,
     dry_run: bool = False,
+    json_output: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Submit all three agent pipelines to a thread pool and collect results.
 
-    Prints each agent's verdict live as it arrives, then returns results in
-    canonical role order: Security → Economic → Governance.
+    When *json_output* is False, prints each agent's verdict live as it
+    arrives. Returns results in canonical order: Security → Economic → Governance.
     """
     role_order = ["Security", "Economic", "Governance"]
     results_by_role: dict[str, dict] = {}
 
-    print(f"\n  {_dim('Agents running in parallel — verdicts will appear as each finishes:')}\n")
+    if not json_output:
+        print(f"\n  {_dim('Agents running in parallel — verdicts will appear as each finishes:')}\n")
 
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="agent") as executor:
         future_to_role: dict[Future, str] = {
@@ -380,9 +386,12 @@ def _run_agents_parallel(
                     "vote_tx": None, "vote_block": None, "address": None,
                 }
             results_by_role[role] = result
-            _print_agent_live(result)
+            if not json_output:
+                _print_agent_live(result)
 
-    print("")
+    if not json_output:
+        print("")
+
     return [results_by_role[r] for r in role_order if r in results_by_role]
 
 
@@ -395,22 +404,6 @@ def _read_final_recommendation(contract: Any, proposal_id: int) -> str | None:
     except Exception as exc:
         logger.warning("Could not read final recommendation: %s", exc)
         return None
-
-
-def _read_proposal(contract: Any, proposal_id: int) -> dict[str, Any]:
-    try:
-        p = contract.functions.getProposal(proposal_id).call()
-        return {
-            "id":           int(p[0]),
-            "title":        p[1],
-            "submitter":    p[3],
-            "status":       "Decided" if int(p[4]) == 1 else "Pending",
-            "timestamp":    int(p[5]),
-            "has_decision": bool(p[7]),
-        }
-    except Exception as exc:
-        logger.warning("Could not read proposal struct: %s", exc)
-        return {}
 
 
 # ── Terminal output ───────────────────────────────────────────────────────────
@@ -469,21 +462,19 @@ def _print_summary(
     p("")
 
     for r in agent_results:
-        role  = r.get("role", "?")
-        rec   = r.get("recommendation") or ""
-        conf  = r.get("confidence")
-        text  = r.get("reasoning") or ""
-        vtx   = r.get("vote_tx")
-        vblk  = r.get("vote_block")
-        err   = r.get("error")
-        ok    = r.get("status") == "success"
+        role = r.get("role", "?")
+        rec  = r.get("recommendation") or ""
+        conf = r.get("confidence")
+        text = r.get("reasoning") or ""
+        vtx  = r.get("vote_tx")
+        vblk = r.get("vote_block")
+        err  = r.get("error")
+        ok   = r.get("status") == "success"
 
         role_label = _cyan(f"■ {role.upper():<12}")
 
         if ok and rec:
-            rec_label  = _colour_rec(rec)
-            conf_label = _dim(f"confidence: {conf}/100")
-            p(f"  {role_label}  {rec_label:<30}  {conf_label}")
+            p(f"  {role_label}  {_colour_rec(rec):<30}  {_dim(f'confidence: {conf}/100')}")
             if text:
                 p(f"    {_dim(_wrap_reasoning(text))}")
             if vtx:
@@ -492,23 +483,15 @@ def _print_summary(
             p(f"  {role_label}  {_red('ERROR')}")
             if err:
                 p(f"    {_dim(_wrap_reasoning(err))}")
-
         p("")
 
     p(_sep())
-    if dry_run:
-        # In dry-run mode derive the consensus from agent results without on-chain data
-        if final_rec:
-            label = _colour_rec(final_rec)
-            p(f"  {_bold('✦  Consensus Recommendation (dry-run):')}  {label}")
-        else:
-            p(f"  {_yellow('⚠  Could not determine consensus (some agents failed).')}")
+    if final_rec:
+        label = _colour_rec(final_rec)
+        verdict_label = "Consensus Recommendation (dry-run)" if dry_run else "Final On-Chain Recommendation"
+        p(f"  {_bold('✦  ' + verdict_label + ':')}  {label}")
     else:
-        if final_rec:
-            label = _colour_rec(final_rec)
-            p(f"  {_bold('✦  Final On-Chain Recommendation:')}  {label}")
-        else:
-            p(f"  {_yellow('⚠  Proposal not fully decided (fewer than 3 votes cast).')}")
+        p(f"  {_yellow('⚠  Proposal not fully decided (fewer than 3 votes cast).')}")
     p(_sep())
     p("")
 
@@ -518,7 +501,7 @@ def _print_summary(
 
 # ── Results persistence ───────────────────────────────────────────────────────
 
-def _save_results(
+def _build_payload(
     proposal_id: int,
     title: str,
     description: str,
@@ -527,12 +510,9 @@ def _save_results(
     agent_results: list[dict],
     final_rec: str | None,
     dry_run: bool = False,
-) -> Path:
-    """Serialise results to /results/proposal_<id>_results.json."""
-    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = _RESULTS_DIR / f"proposal_{proposal_id}_results.json"
-
-    payload = {
+) -> dict[str, Any]:
+    """Construct the results payload dict."""
+    return {
         "proposal_id":          proposal_id,
         "title":                title,
         "description":          description,
@@ -544,6 +524,11 @@ def _save_results(
         "final_recommendation": final_rec,
     }
 
+
+def _save_results(payload: dict[str, Any]) -> Path:
+    """Serialise *payload* to /results/proposal_<id>_results.json."""
+    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = _RESULTS_DIR / f"proposal_{payload['proposal_id']}_results.json"
     out_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -554,19 +539,15 @@ def _save_results(
 # ── dry-run consensus helper ──────────────────────────────────────────────────
 
 def _derive_dry_run_consensus(agent_results: list[dict]) -> str | None:
-    """
-    Mirror the on-chain _finalise logic in Python for dry-run mode.
-
-    Returns the consensus recommendation label or None if results are incomplete.
-    """
+    """Mirror the on-chain _finalise tally logic in Python for dry-run mode."""
     from collections import Counter
 
     recs = [r["recommendation"] for r in agent_results if r.get("recommendation")]
     if len(recs) < 3:
         return None
 
-    counts: dict[str, int]  = Counter(recs)
-    conf:   dict[str, int]  = {}
+    counts: dict[str, int] = Counter(recs)
+    conf:   dict[str, int] = {}
     for r in agent_results:
         rec = r.get("recommendation")
         if rec:
@@ -578,14 +559,12 @@ def _derive_dry_run_consensus(agent_results: list[dict]) -> str | None:
     if len(leaders) == 1:
         return leaders[0]
 
-    # Confidence tiebreak
-    best_conf = max(conf.get(rec, 0) for rec in leaders)
+    best_conf    = max(conf.get(rec, 0) for rec in leaders)
     conf_leaders = [rec for rec in leaders if conf.get(rec, 0) == best_conf]
 
     if len(conf_leaders) == 1:
         return conf_leaders[0]
 
-    # Priority tiebreak: Approve > Revise > Reject
     for priority in ("Approve", "Revise", "Reject"):
         if priority in conf_leaders:
             return priority
@@ -613,14 +592,16 @@ def main() -> None:
 
     load_dotenv(_ENV_PATH)
 
-    dry_run = args.dry_run
+    dry_run     = args.dry_run
+    json_output = args.json_output
 
     # ── 1. Load proposal text ─────────────────────────────────────────────────
     title, description = _load_proposal(args)
 
     # ── 2. On-chain setup (skipped in dry-run) ────────────────────────────────
     if dry_run:
-        print(f"\n{_yellow('dry-run mode — skipping all on-chain transactions')}")
+        if not json_output:
+            print(f"\n{_yellow('dry-run mode — skipping all on-chain transactions')}")
         proposal_id    = 0
         proposal_tx    = "dry-run"
         proposal_block = 0
@@ -638,11 +619,13 @@ def main() -> None:
         contract_address, abi = _load_contract_info()
         w3, contract = _connect(rpc_url, contract_address, abi)
 
-        print(f"\n{_dim('Submitting proposal to DAOGovernance…')}")
+        if not json_output:
+            print(f"\n{_dim('Submitting proposal to DAOGovernance…')}")
         proposal_id, proposal_tx, proposal_block = _submit_proposal(
             w3, contract, proposer_key, title, description
         )
-        print(f"{_dim('  ✔ Proposal')} #{proposal_id} {_dim('confirmed (block ' + str(proposal_block) + ')')}")
+        if not json_output:
+            print(f"{_dim('  ✔ Proposal')} #{proposal_id} {_dim('confirmed (block ' + str(proposal_block) + ')')}")
 
     # ── 3. Instantiate agents ─────────────────────────────────────────────────
     try:
@@ -652,22 +635,25 @@ def main() -> None:
     except ImportError as exc:
         _fatal(f"Could not import agent class: {exc}")
 
-    print(_dim("Initialising agents…"))
+    if not json_output:
+        print(_dim("Initialising agents…"))
     try:
         agents = [SecurityAgent(), EconomicAgent(), GovernanceAgent()]
     except Exception as exc:
         _fatal(f"Agent initialisation failed: {exc}")
 
-    print(_dim(f"  ✔ {len(agents)} agents ready — running analysis in parallel…"))
+    if not json_output:
+        print(_dim(f"  ✔ {len(agents)} agents ready — running analysis in parallel…"))
 
     # ── 4. Run agents concurrently ────────────────────────────────────────────
     agent_results = _run_agents_parallel(
-        agents, proposal_id, title, description, dry_run=dry_run
+        agents, proposal_id, title, description,
+        dry_run=dry_run, json_output=json_output,
     )
 
     successes = sum(1 for r in agent_results if r["status"] == "success")
     failures  = len(agent_results) - successes
-    if failures:
+    if failures and not json_output:
         print(_yellow(f"  ⚠  {failures} agent(s) encountered errors."), file=sys.stderr)
 
     # ── 5. Get final recommendation ───────────────────────────────────────────
@@ -676,21 +662,26 @@ def main() -> None:
     else:
         final_rec = _read_final_recommendation(contract, proposal_id)
 
-    # ── 6. Persist and display ────────────────────────────────────────────────
-    save_path = _save_results(
+    # ── 6. Build and persist payload ──────────────────────────────────────────
+    payload   = _build_payload(
         proposal_id, title, description,
         proposal_tx, proposal_block,
         agent_results, final_rec,
         dry_run=dry_run,
     )
+    save_path = _save_results(payload)
 
-    _print_summary(
-        proposal_id, title,
-        proposal_tx, proposal_block,
-        agent_results, final_rec,
-        save_path,
-        dry_run=dry_run,
-    )
+    # ── 7. Output ─────────────────────────────────────────────────────────────
+    if json_output:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        _print_summary(
+            proposal_id, title,
+            proposal_tx, proposal_block,
+            agent_results, final_rec,
+            save_path,
+            dry_run=dry_run,
+        )
 
     if failures:
         sys.exit(1)
