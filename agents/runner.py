@@ -9,10 +9,11 @@ Steps
 2. Submit the proposal to DAOGovernance and capture the on-chain proposal ID.
 3. Instantiate all three agents (Security, Economic, Governance).
 4. Run each agent's analyze() + submit_vote() pipeline concurrently.
-5. Wait for all three votes; the contract auto-finalises on the third.
-6. Read the final on-chain recommendation from getFinalRecommendation().
-7. Print a formatted terminal summary.
-8. Save full results to /results/proposal_<id>_results.json.
+5. Print each verdict live as it arrives.
+6. Wait for all three votes; the contract auto-finalises on the third.
+7. Read the final on-chain recommendation from getFinalRecommendation().
+8. Print a formatted terminal summary.
+9. Save full results to /results/proposal_<id>_results.json.
 
 Usage examples
 --------------
@@ -342,6 +343,25 @@ def _agent_pipeline(
     return result
 
 
+# ── Live per-agent output ─────────────────────────────────────────────────────
+
+def _print_agent_live(result: dict[str, Any]) -> None:
+    """Print a compact one-line verdict as an individual agent completes."""
+    role = result.get("role", "?")
+    rec  = result.get("recommendation") or ""
+    conf = result.get("confidence")
+    ok   = result.get("status") == "success"
+    err  = result.get("error") or ""
+
+    icon  = _green("✔") if ok else _red("✗")
+    label = _cyan(f"{role.upper():<12}")
+    if ok and rec:
+        print(f"  {icon}  {label}  {_colour_rec(rec):<30}  {_dim(f'confidence: {conf}/100')}")
+    else:
+        short_err = (err[:60] + "…") if len(err) > 60 else err
+        print(f"  {icon}  {label}  {_red('ERROR')}  {_dim(short_err)}")
+
+
 # ── Parallel execution ────────────────────────────────────────────────────────
 
 def _run_agents_parallel(
@@ -353,12 +373,13 @@ def _run_agents_parallel(
     """
     Submit all three agent pipelines to a thread pool and collect results.
 
-    Results are returned in the canonical role order:
-      Security → Economic → Governance
-    regardless of completion order.
+    Prints each agent's verdict live as it arrives, then returns results in
+    canonical role order: Security → Economic → Governance.
     """
     role_order = ["Security", "Economic", "Governance"]
     results_by_role: dict[str, dict] = {}
+
+    print(f"\n  {_dim('Agents running in parallel — verdicts will appear as each finishes:')}\n")
 
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="agent") as executor:
         future_to_role: dict[Future, str] = {
@@ -369,16 +390,17 @@ def _run_agents_parallel(
         for future in as_completed(future_to_role):
             role = future_to_role[future]
             try:
-                results_by_role[role] = future.result()
+                result = future.result()
             except Exception as exc:  # noqa: BLE001
-                # Should not reach here because _agent_pipeline catches internally,
-                # but guard just in case.
-                results_by_role[role] = {
+                result = {
                     "role": role, "status": "error", "error": str(exc),
                     "recommendation": None, "confidence": None, "reasoning": None,
                     "vote_tx": None, "vote_block": None, "address": None,
                 }
+            results_by_role[role] = result
+            _print_agent_live(result)
 
+    print("")
     return [results_by_role[r] for r in role_order if r in results_by_role]
 
 
@@ -608,7 +630,7 @@ def main() -> None:
     except Exception as exc:
         _fatal(f"Agent initialisation failed: {exc}")
 
-    print(_dim(f"  ✔ {len(agents)} agents ready — running analysis in parallel…\n"))
+    print(_dim(f"  ✔ {len(agents)} agents ready — running analysis in parallel…"))
 
     # ── 6. Run agents concurrently ────────────────────────────────────────────
     agent_results = _run_agents_parallel(agents, proposal_id, title, description)
