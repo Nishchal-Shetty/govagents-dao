@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,10 @@ _REC_NORMALISE: dict[str, str] = {k.lower(): k for k in RECOMMENDATION}
 
 # Claude model used for all analysis calls
 _MODEL = "claude-sonnet-4-20250514"
+
+# Retry configuration for transient Anthropic API errors
+_MAX_RETRIES   = 3
+_RETRY_BASE_DELAY = 2  # seconds; actual delay = _RETRY_BASE_DELAY ** attempt
 
 
 # ── Custom exceptions ─────────────────────────────────────────────────────────
@@ -434,34 +439,48 @@ class BaseAgent:
         return address, abi
 
     def _call_anthropic(self, user_message: str) -> str:
-        """Send a message to Claude and return the raw text response."""
-        try:
-            response = self._anthropic.messages.create(
-                model=_MODEL,
-                max_tokens=512,
-                system=self._system_prompt(),
-                messages=[{"role": "user", "content": user_message}],
-            )
-        except anthropic.APIConnectionError as exc:
-            raise AnalysisError(
-                f"Could not reach the Anthropic API: {exc}"
-            ) from exc
-        except anthropic.RateLimitError as exc:
-            raise AnalysisError(
-                f"Anthropic rate limit exceeded: {exc}"
-            ) from exc
-        except anthropic.APIStatusError as exc:
-            raise AnalysisError(
-                f"Anthropic API returned HTTP {exc.status_code}: {exc.message}"
-            ) from exc
-        except anthropic.APIError as exc:
-            # Catch-all for any other SDK-level error
-            raise AnalysisError(f"Anthropic API error: {exc}") from exc
+        """
+        Send a message to Claude and return the raw text response.
 
-        if not response.content:
-            raise AnalysisError("Anthropic returned an empty response.")
+        Retries up to ``_MAX_RETRIES`` times on transient errors
+        (rate-limit or connection failures) with exponential backoff.
+        Non-retryable errors (bad status codes, etc.) are raised immediately.
+        """
+        last_exc: Exception | None = None
 
-        return response.content[0].text.strip()
+        for attempt in range(_MAX_RETRIES):
+            try:
+                response = self._anthropic.messages.create(
+                    model=_MODEL,
+                    max_tokens=512,
+                    system=self._system_prompt(),
+                    messages=[{"role": "user", "content": user_message}],
+                )
+                if not response.content:
+                    raise AnalysisError("Anthropic returned an empty response.")
+                return response.content[0].text.strip()
+
+            except (anthropic.RateLimitError, anthropic.APIConnectionError) as exc:
+                last_exc = exc
+                if attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_BASE_DELAY ** (attempt + 1)
+                    logger.warning(
+                        "Transient error on attempt %d/%d (%s) — retrying in %ds",
+                        attempt + 1, _MAX_RETRIES, type(exc).__name__, delay,
+                    )
+                    time.sleep(delay)
+
+            except anthropic.APIStatusError as exc:
+                raise AnalysisError(
+                    f"Anthropic API returned HTTP {exc.status_code}: {exc.message}"
+                ) from exc
+
+            except anthropic.APIError as exc:
+                raise AnalysisError(f"Anthropic API error: {exc}") from exc
+
+        raise AnalysisError(
+            f"Anthropic API call failed after {_MAX_RETRIES} attempts: {last_exc}"
+        ) from last_exc
 
     def _parse_claude_response(self, raw: str) -> dict[str, Any]:
         """

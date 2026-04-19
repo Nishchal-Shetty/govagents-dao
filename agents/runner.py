@@ -7,12 +7,15 @@ Steps
 -----
 1. Parse CLI args → load proposal text (inline or from /sample-proposals/).
 2. Submit the proposal to DAOGovernance and capture the on-chain proposal ID.
+   (Skipped in --dry-run mode.)
 3. Instantiate all three agents (Security, Economic, Governance).
 4. Run each agent's analyze() + submit_vote() pipeline concurrently.
-5. Wait for all three votes; the contract auto-finalises on the third.
-6. Read the final on-chain recommendation from getFinalRecommendation().
-7. Print a formatted terminal summary.
-8. Save full results to /results/proposal_<id>_results.json.
+   (submit_vote skipped in --dry-run mode.)
+5. Print each verdict live as it arrives.
+6. Wait for all three votes; the contract auto-finalises on the third.
+7. Read the final on-chain recommendation from getFinalRecommendation().
+8. Print a formatted terminal summary, or JSON when --json is set.
+9. Save full results to /results/proposal_<id>_results.json.
 
 Usage examples
 --------------
@@ -22,10 +25,13 @@ Usage examples
   # Load from sample-proposals/
   python runner.py --file proposal-001-treasury-grant.txt
 
-  # Arbitrary path
-  python runner.py --file /tmp/my-proposal.txt
+  # Analyze only — no Hardhat node needed
+  python runner.py --file proposal-001-treasury-grant.txt --dry-run
 
-  # Suppress ANSI colours (useful in CI)
+  # Machine-readable JSON output (CI-friendly)
+  python runner.py --file proposal-001-treasury-grant.txt --dry-run --json
+
+  # Suppress ANSI colours
   python runner.py --file proposal-001-treasury-grant.txt --no-color
 
 Environment variables (agents/.env)
@@ -78,7 +84,6 @@ _COLOUR_ENABLED = True  # toggled by --no-color
 
 
 def _c(code: str, text: str) -> str:
-    """Wrap *text* in an ANSI escape sequence when colours are enabled."""
     return f"\033[{code}m{text}\033[0m" if _COLOUR_ENABLED else text
 
 
@@ -92,7 +97,6 @@ def _white(t: str)  -> str: return _c("1;37",  t)
 
 
 def _colour_rec(label: str) -> str:
-    """Apply role-appropriate colour to a recommendation label."""
     return {"APPROVE": _green, "REJECT": _red, "REVISE": _yellow}.get(
         label.upper(), _white
     )(label.upper())
@@ -108,6 +112,8 @@ def _parse_args() -> argparse.Namespace:
             examples:
               python runner.py --title "Grant" --description "Allocate 50k USDC..."
               python runner.py --file proposal-001-treasury-grant.txt
+              python runner.py --file proposal-001-treasury-grant.txt --dry-run
+              python runner.py --file proposal-001-treasury-grant.txt --dry-run --json
               python runner.py --file /tmp/custom.txt --no-color
         """),
     )
@@ -133,6 +139,23 @@ def _parse_args() -> argparse.Namespace:
         help="Proposal description body (required when --title is used).",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Run Claude analysis but skip all on-chain transactions. "
+            "No Hardhat node or deployed contract required."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help=(
+            "Print results as a JSON object to stdout instead of the "
+            "ANSI terminal summary. Useful for CI pipelines and scripting."
+        ),
+    )
+    parser.add_argument(
         "--no-color",
         action="store_true",
         help="Disable ANSI colour output.",
@@ -154,12 +177,6 @@ def _parse_args() -> argparse.Namespace:
 # ── Proposal loading ──────────────────────────────────────────────────────────
 
 def _resolve_proposal_file(raw: str) -> Path:
-    """
-    Resolve a --file argument to an absolute Path.
-
-    A bare filename (no directory component) is looked up in /sample-proposals/.
-    Relative or absolute paths are used directly.
-    """
     p = Path(raw)
     if p.parent == Path(".") and not p.is_absolute() and not p.exists():
         candidate = _SAMPLE_PROPOSALS_DIR / p
@@ -170,35 +187,20 @@ def _resolve_proposal_file(raw: str) -> Path:
 
 
 def _parse_proposal_file(path: Path) -> tuple[str, str]:
-    """
-    Parse a proposal text file into (title, description).
-
-    Title extraction rules (applied to the first non-empty line):
-      1. If the line matches "PROPOSAL #NNN — <title>", extract everything
-         after the last em-dash or en-dash.
-      2. Otherwise use the full first non-empty line as the title.
-
-    The description is every line after the first non-empty line, stripped of
-    leading/trailing blank lines.
-    """
     if not path.exists():
         _fatal(f"Proposal file not found: {path}")
 
-    text = path.read_text(encoding="utf-8")
+    text  = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    # Find first non-empty line
     first_idx = next((i for i, l in enumerate(lines) if l.strip()), None)
     if first_idx is None:
         _fatal(f"Proposal file is empty: {path}")
 
     first_line = lines[first_idx].strip()
-
-    # Try to extract the title after an em-dash (—) or en-dash (–)
     dash_match = re.search(r"[—–]\s*(.+)$", first_line)
     title = dash_match.group(1).strip() if dash_match else first_line
 
-    # Description: everything after the first line, stripped of surrounding blanks
     description = "\n".join(lines[first_idx + 1:]).strip()
     if not description:
         _fatal(f"Proposal file has a title but no description body: {path}")
@@ -207,7 +209,6 @@ def _parse_proposal_file(path: Path) -> tuple[str, str]:
 
 
 def _load_proposal(args: argparse.Namespace) -> tuple[str, str]:
-    """Return (title, description) from CLI args or file."""
     if args.file:
         path = _resolve_proposal_file(args.file)
         logger.info("Loading proposal from %s", path)
@@ -218,7 +219,6 @@ def _load_proposal(args: argparse.Namespace) -> tuple[str, str]:
 # ── Web3 / contract setup ─────────────────────────────────────────────────────
 
 def _load_contract_info() -> tuple[str, list]:
-    """Read contract_info.json and return (contractAddress, abi)."""
     if not _INFO_PATH.exists():
         _fatal(
             f"contract_info.json not found at {_INFO_PATH}.\n"
@@ -229,7 +229,6 @@ def _load_contract_info() -> tuple[str, list]:
 
 
 def _connect(rpc_url: str, contract_address: str, abi: list) -> tuple[Web3, Any]:
-    """Connect to the node and return (w3, contract)."""
     w3 = Web3(Web3.HTTPProvider(rpc_url))
     if not w3.is_connected():
         _fatal(
@@ -252,11 +251,6 @@ def _submit_proposal(
     title: str,
     description: str,
 ) -> tuple[int, str, int]:
-    """
-    Submit the proposal on-chain and return (proposal_id, tx_hash, block_number).
-
-    The proposal ID is extracted from the ProposalSubmitted event in the receipt.
-    """
     try:
         account = w3.eth.account.from_key(proposer_key)
     except Exception as exc:
@@ -278,7 +272,6 @@ def _submit_proposal(
     if receipt.status != 1:
         _fatal(f"submitProposal transaction reverted. tx={tx_hash.hex()}")
 
-    # Decode the ProposalSubmitted event to get the proposal ID
     events = contract.events.ProposalSubmitted().process_receipt(receipt)
     if not events:
         _fatal("ProposalSubmitted event not found in receipt.")
@@ -294,17 +287,8 @@ def _agent_pipeline(
     proposal_id: int,
     title: str,
     description: str,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """
-    Full per-agent pipeline executed concurrently in a thread-pool worker.
-
-    Steps:
-      1. agent.analyze(title, description)  → verdict dict
-      2. agent.submit_vote(...)             → receipt dict
-
-    Returns a combined result dict. Errors are caught and returned as a failed
-    result so the other agents can still complete.
-    """
     result: dict[str, Any] = {
         "role":           agent.role,
         "address":        agent.address,
@@ -318,28 +302,47 @@ def _agent_pipeline(
     }
 
     try:
-        # Step 1 — analysis via Anthropic API
         verdict = agent.analyze(title, description)
         result["recommendation"] = verdict["recommendation"]
         result["confidence"]     = verdict["confidence"]
         result["reasoning"]      = verdict["reasoning"]
 
-        # Step 2 — on-chain vote submission
-        receipt = agent.submit_vote(
-            proposal_id    = proposal_id,
-            recommendation = verdict["recommendation"],
-            confidence     = verdict["confidence"],
-            reasoning      = verdict["reasoning"],
-        )
-        result["vote_tx"]    = receipt["tx_hash"]
-        result["vote_block"] = receipt["block_number"]
-        result["status"]     = "success"
+        if not dry_run:
+            receipt = agent.submit_vote(
+                proposal_id    = proposal_id,
+                recommendation = verdict["recommendation"],
+                confidence     = verdict["confidence"],
+                reasoning      = verdict["reasoning"],
+            )
+            result["vote_tx"]    = receipt["tx_hash"]
+            result["vote_block"] = receipt["block_number"]
+
+        result["status"] = "success"
 
     except Exception as exc:  # noqa: BLE001
         result["error"] = str(exc)
         logger.error("Agent %s pipeline failed: %s", agent.role, exc)
 
     return result
+
+
+# ── Live per-agent output ─────────────────────────────────────────────────────
+
+def _print_agent_live(result: dict[str, Any]) -> None:
+    """Print a compact one-line verdict as an individual agent completes."""
+    role = result.get("role", "?")
+    rec  = result.get("recommendation") or ""
+    conf = result.get("confidence")
+    ok   = result.get("status") == "success"
+    err  = result.get("error") or ""
+
+    icon  = _green("✔") if ok else _red("✗")
+    label = _cyan(f"{role.upper():<12}")
+    if ok and rec:
+        print(f"  {icon}  {label}  {_colour_rec(rec):<30}  {_dim(f'confidence: {conf}/100')}")
+    else:
+        short_err = (err[:60] + "…") if len(err) > 60 else err
+        print(f"  {icon}  {label}  {_red('ERROR')}  {_dim(short_err)}")
 
 
 # ── Parallel execution ────────────────────────────────────────────────────────
@@ -349,35 +352,45 @@ def _run_agents_parallel(
     proposal_id: int,
     title: str,
     description: str,
+    dry_run: bool = False,
+    json_output: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Submit all three agent pipelines to a thread pool and collect results.
 
-    Results are returned in the canonical role order:
-      Security → Economic → Governance
-    regardless of completion order.
+    When *json_output* is False, prints each agent's verdict live as it
+    arrives. Returns results in canonical order: Security → Economic → Governance.
     """
     role_order = ["Security", "Economic", "Governance"]
     results_by_role: dict[str, dict] = {}
 
+    if not json_output:
+        print(f"\n  {_dim('Agents running in parallel — verdicts will appear as each finishes:')}\n")
+
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="agent") as executor:
         future_to_role: dict[Future, str] = {
-            executor.submit(_agent_pipeline, agent, proposal_id, title, description): agent.role
+            executor.submit(
+                _agent_pipeline, agent, proposal_id, title, description, dry_run
+            ): agent.role
             for agent in agents
         }
 
         for future in as_completed(future_to_role):
             role = future_to_role[future]
             try:
-                results_by_role[role] = future.result()
+                result = future.result()
             except Exception as exc:  # noqa: BLE001
-                # Should not reach here because _agent_pipeline catches internally,
-                # but guard just in case.
-                results_by_role[role] = {
+                result = {
                     "role": role, "status": "error", "error": str(exc),
                     "recommendation": None, "confidence": None, "reasoning": None,
                     "vote_tx": None, "vote_block": None, "address": None,
                 }
+            results_by_role[role] = result
+            if not json_output:
+                _print_agent_live(result)
+
+    if not json_output:
+        print("")
 
     return [results_by_role[r] for r in role_order if r in results_by_role]
 
@@ -385,11 +398,6 @@ def _run_agents_parallel(
 # ── On-chain result read ──────────────────────────────────────────────────────
 
 def _read_final_recommendation(contract: Any, proposal_id: int) -> str | None:
-    """
-    Call getFinalRecommendation() and return the human-readable label.
-
-    Returns None if the proposal has not been decided yet (e.g. < 3 votes cast).
-    """
     try:
         rec_int = contract.functions.getFinalRecommendation(proposal_id).call()
         return _REC_LABEL.get(int(rec_int), f"UNKNOWN({rec_int})")
@@ -398,28 +406,9 @@ def _read_final_recommendation(contract: Any, proposal_id: int) -> str | None:
         return None
 
 
-def _read_proposal(contract: Any, proposal_id: int) -> dict[str, Any]:
-    """Return the on-chain Proposal struct as a plain dict."""
-    try:
-        p = contract.functions.getProposal(proposal_id).call()
-        # struct fields: id, title, description, submitter, status, timestamp,
-        #                finalRecommendation, hasDecision
-        return {
-            "id":              int(p[0]),
-            "title":           p[1],
-            "submitter":       p[3],
-            "status":          "Decided" if int(p[4]) == 1 else "Pending",
-            "timestamp":       int(p[5]),
-            "has_decision":    bool(p[7]),
-        }
-    except Exception as exc:
-        logger.warning("Could not read proposal struct: %s", exc)
-        return {}
-
-
 # ── Terminal output ───────────────────────────────────────────────────────────
 
-_WIDTH = 66  # total width of the box / separator
+_WIDTH = 66
 
 
 def _sep(char: str = "═") -> str:
@@ -430,14 +419,12 @@ def _box_top()    -> str: return _dim("╔" + "═" * (_WIDTH - 2) + "╗")
 def _box_bottom() -> str: return _dim("╚" + "═" * (_WIDTH - 2) + "╝")
 def _box_line(text: str, pad: int = 2) -> str:
     inner = " " * pad + text
-    # Strip ANSI for length calculation
     visible_len = len(re.sub(r"\033\[[0-9;]*m", "", inner))
     fill = max(0, _WIDTH - 2 - visible_len)
     return _dim("║") + inner + " " * fill + _dim("║")
 
 
 def _wrap_reasoning(text: str, indent: int = 4, width: int = 62) -> str:
-    """Wrap reasoning text to fit the summary block."""
     lines = textwrap.wrap(text, width=width - indent)
     prefix = " " * indent
     return ("\n" + prefix).join(lines)
@@ -451,8 +438,9 @@ def _print_summary(
     agent_results: list[dict],
     final_rec: str | None,
     save_path: Path,
+    dry_run: bool = False,
 ) -> None:
-    p = print  # shorthand
+    p = print
 
     p("")
     p(_box_top())
@@ -460,34 +448,33 @@ def _print_summary(
     p(_box_bottom())
     p("")
 
-    # ── Proposal header ───────────────────────────────────────────────────────
     p(f"  {_bold('Proposal #' + str(proposal_id))}  ·  {title}")
-    p(f"  {_dim('Tx hash')}  :  {_dim(proposal_tx)}")
-    p(f"  {_dim('Block')}    :  {_dim(str(proposal_block))}")
+    if dry_run:
+        p(f"  {_yellow('dry-run mode — no transactions submitted')}")
+    else:
+        p(f"  {_dim('Tx hash')}  :  {_dim(proposal_tx)}")
+        p(f"  {_dim('Block')}    :  {_dim(str(proposal_block))}")
     p("")
 
-    # ── Agent verdicts ────────────────────────────────────────────────────────
     p(_sep())
     p(f"  {_bold('Agent Verdicts')}")
     p(_sep())
     p("")
 
     for r in agent_results:
-        role  = r.get("role", "?")
-        rec   = r.get("recommendation") or ""
-        conf  = r.get("confidence")
-        text  = r.get("reasoning") or ""
-        vtx   = r.get("vote_tx")
-        vblk  = r.get("vote_block")
-        err   = r.get("error")
-        ok    = r.get("status") == "success"
+        role = r.get("role", "?")
+        rec  = r.get("recommendation") or ""
+        conf = r.get("confidence")
+        text = r.get("reasoning") or ""
+        vtx  = r.get("vote_tx")
+        vblk = r.get("vote_block")
+        err  = r.get("error")
+        ok   = r.get("status") == "success"
 
         role_label = _cyan(f"■ {role.upper():<12}")
 
         if ok and rec:
-            rec_label  = _colour_rec(rec)
-            conf_label = _dim(f"confidence: {conf}/100")
-            p(f"  {role_label}  {rec_label:<30}  {conf_label}")
+            p(f"  {role_label}  {_colour_rec(rec):<30}  {_dim(f'confidence: {conf}/100')}")
             if text:
                 p(f"    {_dim(_wrap_reasoning(text))}")
             if vtx:
@@ -496,27 +483,25 @@ def _print_summary(
             p(f"  {role_label}  {_red('ERROR')}")
             if err:
                 p(f"    {_dim(_wrap_reasoning(err))}")
-
         p("")
 
-    # ── Final recommendation ──────────────────────────────────────────────────
     p(_sep())
     if final_rec:
         label = _colour_rec(final_rec)
-        p(f"  {_bold('✦  Final On-Chain Recommendation:')}  {label}")
+        verdict_label = "Consensus Recommendation (dry-run)" if dry_run else "Final On-Chain Recommendation"
+        p(f"  {_bold('✦  ' + verdict_label + ':')}  {label}")
     else:
         p(f"  {_yellow('⚠  Proposal not fully decided (fewer than 3 votes cast).')}")
     p(_sep())
     p("")
 
-    # ── Save path ─────────────────────────────────────────────────────────────
     p(f"  {_dim('Results saved →')}  {save_path}")
     p("")
 
 
 # ── Results persistence ───────────────────────────────────────────────────────
 
-def _save_results(
+def _build_payload(
     proposal_id: int,
     title: str,
     description: str,
@@ -524,22 +509,26 @@ def _save_results(
     proposal_block: int,
     agent_results: list[dict],
     final_rec: str | None,
-) -> Path:
-    """Serialise results to /results/proposal_<id>_results.json."""
-    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = _RESULTS_DIR / f"proposal_{proposal_id}_results.json"
-
-    payload = {
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Construct the results payload dict."""
+    return {
         "proposal_id":          proposal_id,
         "title":                title,
         "description":          description,
         "proposal_tx":          proposal_tx,
         "proposal_block":       proposal_block,
         "run_at":               datetime.now(timezone.utc).isoformat(),
+        "dry_run":              dry_run,
         "agents":               agent_results,
         "final_recommendation": final_rec,
     }
 
+
+def _save_results(payload: dict[str, Any]) -> Path:
+    """Serialise *payload* to /results/proposal_<id>_results.json."""
+    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = _RESULTS_DIR / f"proposal_{payload['proposal_id']}_results.json"
     out_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -547,10 +536,45 @@ def _save_results(
     return out_path
 
 
+# ── dry-run consensus helper ──────────────────────────────────────────────────
+
+def _derive_dry_run_consensus(agent_results: list[dict]) -> str | None:
+    """Mirror the on-chain _finalise tally logic in Python for dry-run mode."""
+    from collections import Counter
+
+    recs = [r["recommendation"] for r in agent_results if r.get("recommendation")]
+    if len(recs) < 3:
+        return None
+
+    counts: dict[str, int] = Counter(recs)
+    conf:   dict[str, int] = {}
+    for r in agent_results:
+        rec = r.get("recommendation")
+        if rec:
+            conf[rec] = conf.get(rec, 0) + (r.get("confidence") or 0)
+
+    max_count = max(counts.values())
+    leaders = [rec for rec, cnt in counts.items() if cnt == max_count]
+
+    if len(leaders) == 1:
+        return leaders[0]
+
+    best_conf    = max(conf.get(rec, 0) for rec in leaders)
+    conf_leaders = [rec for rec in leaders if conf.get(rec, 0) == best_conf]
+
+    if len(conf_leaders) == 1:
+        return conf_leaders[0]
+
+    for priority in ("Approve", "Revise", "Reject"):
+        if priority in conf_leaders:
+            return priority
+
+    return None
+
+
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 def _fatal(message: str) -> None:
-    """Print an error message and exit with code 1."""
     print(f"\n{_red('✗  Error:')} {message}\n", file=sys.stderr)
     sys.exit(1)
 
@@ -560,41 +584,50 @@ def _fatal(message: str) -> None:
 def main() -> None:
     args = _parse_args()
 
-    # Apply global colour toggle
     global _COLOUR_ENABLED
     _COLOUR_ENABLED = not args.no_color and sys.stdout.isatty()
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # ── 1. Load environment ───────────────────────────────────────────────────
     load_dotenv(_ENV_PATH)
 
-    rpc_url      = os.getenv("RPC_URL", "http://127.0.0.1:8545").strip()
-    proposer_key = os.getenv("PROPOSER_KEY", "").strip()
-    if not proposer_key:
-        _fatal(
-            "PROPOSER_KEY is not set in agents/.env.\n"
-            "  For a local Hardhat node use accounts[0]:\n"
-            "  PROPOSER_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        )
+    dry_run     = args.dry_run
+    json_output = args.json_output
 
-    # ── 2. Load proposal text ─────────────────────────────────────────────────
+    # ── 1. Load proposal text ─────────────────────────────────────────────────
     title, description = _load_proposal(args)
 
-    # ── 3. Connect to chain ───────────────────────────────────────────────────
-    contract_address, abi = _load_contract_info()
-    w3, contract = _connect(rpc_url, contract_address, abi)
+    # ── 2. On-chain setup (skipped in dry-run) ────────────────────────────────
+    if dry_run:
+        if not json_output:
+            print(f"\n{_yellow('dry-run mode — skipping all on-chain transactions')}")
+        proposal_id    = 0
+        proposal_tx    = "dry-run"
+        proposal_block = 0
+        contract       = None
+    else:
+        rpc_url      = os.getenv("RPC_URL", "http://127.0.0.1:8545").strip()
+        proposer_key = os.getenv("PROPOSER_KEY", "").strip()
+        if not proposer_key:
+            _fatal(
+                "PROPOSER_KEY is not set in agents/.env.\n"
+                "  For a local Hardhat node use accounts[0]:\n"
+                "  PROPOSER_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            )
 
-    # ── 4. Submit proposal on-chain ───────────────────────────────────────────
-    print(f"\n{_dim('Submitting proposal to DAOGovernance…')}")
-    proposal_id, proposal_tx, proposal_block = _submit_proposal(
-        w3, contract, proposer_key, title, description
-    )
-    print(f"{_dim('  ✔ Proposal')} #{proposal_id} {_dim('confirmed (block ' + str(proposal_block) + ')')}")
+        contract_address, abi = _load_contract_info()
+        w3, contract = _connect(rpc_url, contract_address, abi)
 
-    # ── 5. Instantiate agents ─────────────────────────────────────────────────
-    # Import here so missing packages produce a clear error after env checks
+        if not json_output:
+            print(f"\n{_dim('Submitting proposal to DAOGovernance…')}")
+        proposal_id, proposal_tx, proposal_block = _submit_proposal(
+            w3, contract, proposer_key, title, description
+        )
+        if not json_output:
+            print(f"{_dim('  ✔ Proposal')} #{proposal_id} {_dim('confirmed (block ' + str(proposal_block) + ')')}")
+
+    # ── 3. Instantiate agents ─────────────────────────────────────────────────
     try:
         from security_agent   import SecurityAgent
         from economic_agent   import EconomicAgent
@@ -602,44 +635,54 @@ def main() -> None:
     except ImportError as exc:
         _fatal(f"Could not import agent class: {exc}")
 
-    print(_dim("Initialising agents…"))
+    if not json_output:
+        print(_dim("Initialising agents…"))
     try:
         agents = [SecurityAgent(), EconomicAgent(), GovernanceAgent()]
     except Exception as exc:
         _fatal(f"Agent initialisation failed: {exc}")
 
-    print(_dim(f"  ✔ {len(agents)} agents ready — running analysis in parallel…\n"))
+    if not json_output:
+        print(_dim(f"  ✔ {len(agents)} agents ready — running analysis in parallel…"))
 
-    # ── 6. Run agents concurrently ────────────────────────────────────────────
-    agent_results = _run_agents_parallel(agents, proposal_id, title, description)
+    # ── 4. Run agents concurrently ────────────────────────────────────────────
+    agent_results = _run_agents_parallel(
+        agents, proposal_id, title, description,
+        dry_run=dry_run, json_output=json_output,
+    )
 
     successes = sum(1 for r in agent_results if r["status"] == "success")
     failures  = len(agent_results) - successes
-    if failures:
-        print(
-            _yellow(f"  ⚠  {failures} agent(s) encountered errors."),
-            file=sys.stderr,
-        )
+    if failures and not json_output:
+        print(_yellow(f"  ⚠  {failures} agent(s) encountered errors."), file=sys.stderr)
 
-    # ── 7. Read final on-chain recommendation ────────────────────────────────
-    final_rec = _read_final_recommendation(contract, proposal_id)
+    # ── 5. Get final recommendation ───────────────────────────────────────────
+    if dry_run:
+        final_rec = _derive_dry_run_consensus(agent_results)
+    else:
+        final_rec = _read_final_recommendation(contract, proposal_id)
 
-    # ── 8. Persist results ────────────────────────────────────────────────────
-    save_path = _save_results(
+    # ── 6. Build and persist payload ──────────────────────────────────────────
+    payload   = _build_payload(
         proposal_id, title, description,
         proposal_tx, proposal_block,
         agent_results, final_rec,
+        dry_run=dry_run,
     )
+    save_path = _save_results(payload)
 
-    # ── 9. Print summary ──────────────────────────────────────────────────────
-    _print_summary(
-        proposal_id, title,
-        proposal_tx, proposal_block,
-        agent_results, final_rec,
-        save_path,
-    )
+    # ── 7. Output ─────────────────────────────────────────────────────────────
+    if json_output:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        _print_summary(
+            proposal_id, title,
+            proposal_tx, proposal_block,
+            agent_results, final_rec,
+            save_path,
+            dry_run=dry_run,
+        )
 
-    # Exit non-zero if any agent failed
     if failures:
         sys.exit(1)
 
