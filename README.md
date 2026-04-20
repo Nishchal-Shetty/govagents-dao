@@ -312,6 +312,20 @@ accountability mechanisms are explicit.
 
 ---
 
+## Related Work
+
+The space of AI-augmented DAO governance has become active. The most directly relevant work:
+
+- **DAO-AI** (Capponi et al., October 2025) — tested an autonomous AI voter against 3,000+ real proposals from Compound, Uniswap, and Aave. Found that AI produces interpretable, auditable voting signals at scale and that model outputs correlate meaningfully with eventual human outcomes.
+- **QOC DAO** (Jansen and Verdot, November 2025) — proposes a stepwise framework for integrating LLM-based agents into DAO evaluation pipelines, with explicit safeguards to detect prompt manipulation and voting collusion across agents.
+- **DAO-Agent** (Xia et al., December 2025) — addresses the multi-agent coordination and verification problem using zero-knowledge proofs over LLM inference and Shapley-value-based contribution measurement to attribute decision influence across agents.
+- **StableLab AI Delegate Report** (May 2025) — practitioner survey of current AI delegate tooling deployed across major DAOs; covers integration patterns, trust assumptions, and observed failure modes.
+- **NEAR Foundation AI Digital Twins** — live program building AI agents trained on individual users' past voting history and stated preferences, effectively implementing the personal agent model described in the Trust and Bias section below.
+
+This project's contribution relative to that literature is a specific architecture: fixed specialized roles, majority-vote aggregation with a confidence-score tiebreak, and full reasoning strings stored on-chain as indexed events. The claim isn't novelty over all agent-based governance approaches — it's that this particular combination of design choices (on-chain auditability + role specialization + cryptographic agent identity) is worth studying as a concrete prototype.
+
+---
+
 ## Trust and Bias
 
 The most important unresolved design question: whoever deploys and registers the three agents controls what they evaluate and how. A token holder interacting with the DAO has no way to verify that those agents weren't pre-tuned to favor a particular outcome. Everything downstream of `registerAgent()` is trust-the-operator.
