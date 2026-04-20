@@ -32,15 +32,15 @@ without any human intermediary.
 agents, the runner pipeline, the test suite, and the initial sample proposals.
 This includes the on-chain voting logic, tiebreak rules, agent prompting
 strategy, and the web3 integration that lets Python agents sign and submit
-blockchain transactions.
+blockchain transactions. He also wrote the Trust and Bias section.
 
 **Shreshth Srivastava** built the evaluation and analysis layer, and hardened
 the runner for real use. He added the offline evaluation harness and
 human-labeled ground-truth dataset, the `--dry-run` and `--json` CLI flags,
 live verdict printing as each agent completes, automatic API retry with
 exponential backoff, and the environment-check utility. He also wrote the
-Aggregation Mechanism analysis, Trust and Bias section, Related Work survey,
-and the personal agent model design sketch in the contract.
+Aggregation Mechanism analysis, and Related Work survey and 
+the personal agent model design sketch in the contract.
 
 ---
 
