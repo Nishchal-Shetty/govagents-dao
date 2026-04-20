@@ -67,6 +67,21 @@ The system is designed to be fully auditable: every vote, confidence score, and 
 
 ---
 
+## Aggregation Mechanism
+
+The tiebreak scheme — majority first, then summed confidence, then fixed priority — is a practical heuristic. It's worth being explicit about what it is and isn't.
+
+Structurally it resembles a Borda-count variant: confidence scores act as partial preference weights added within each recommendation bucket. The fixed priority ordering (Approve > Revise > Reject) encodes a deliberate conservative bias — when everything is tied, the system prefers action over rejection. That's a design choice, not a neutral default, and a DAO with different risk preferences might flip it.
+
+Known weaknesses:
+- **Confidence is self-reported and uncalibrated.** There's no ground truth to validate that a score of 85 from the Economic agent means the same thing as 85 from the Security agent. The model's confidence correlates with token-level certainty, not predictive accuracy.
+- **Roles are equally weighted.** Summing confidence across Security, Economic, and Governance treats them as interchangeable. For a contract-upgrade proposal, the Security agent's concern should arguably count more. The current scheme has no way to express that.
+- **All-Revise is indistinguishable from all-Approve in the majority step.** Both produce a clear winner without hitting the tiebreak — but a unanimous Revise is a much weaker endorsement than a unanimous Approve.
+
+A more principled alternative is role-weighted aggregation: assign each role a weight based on proposal type (detected from keywords or a type field), then compute a weighted sum over recommendation scores. This would require a small contract change and a labeling step at proposal submission. It's listed in Future Improvements as "confidence-weighted tally" but the role-weighting dimension is the more important one.
+
+---
+
 ## Prerequisites
 
 | Tool | Version |
@@ -280,9 +295,18 @@ accountability mechanisms are explicit.
   different agents work correctly (separate wallets), but any agent that
   submits two transactions quickly may hit nonce race conditions without
   additional retry logic.
-- **Plain-text reasoning on-chain** — long reasoning strings increase gas
-  costs significantly (`submitProposal` for a ~1.6 kB description costs
-  ~1.35 M gas). Consider IPFS / calldata hashing for production.
+- **Plain-text reasoning on-chain** — storing full reasoning strings in
+  contract storage is expensive at scale. Gas cost breakdown and alternatives:
+
+  | Approach | Approx. gas / vote | Notes |
+  |---|---|---|
+  | Full string in storage (current) | ~450K | Fully auditable via `getVote()`; readable on-chain |
+  | Calldata only (emit, don't store) | ~120K | Readable from event logs; not queryable from contract |
+  | IPFS hash on-chain | ~80K | Cheap; requires IPFS pinning for long-term availability |
+  | Off-chain sig + content hash | ~50K | Cheapest; auditability depends on signer staying available |
+
+  For a local prototype the current approach is fine. For mainnet with
+  hundreds of proposals, IPFS with on-chain content hashes is the right path.
 - **No proposal expiry** — pending proposals remain open indefinitely if
   fewer than three agents vote.
 - **Local network only** — keys and addresses in `.env.example` are Hardhat
