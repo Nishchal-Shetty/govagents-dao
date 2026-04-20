@@ -1,0 +1,31 @@
+Bug Bounty Program: 90-Day Security Incentive Initiative
+
+## Summary
+
+Establish a time-bounded bug bounty program to incentivise external security researchers to responsibly disclose vulnerabilities in the DAO's deployed contracts.
+
+## Motivation
+
+The core contracts (DAOGovernance.sol and associated treasury logic) have been audited internally but have not been exposed to independent external review under economic incentive. A bug bounty lowers the cost of finding vulnerabilities before they are exploited and signals to the broader community that the DAO takes security seriously.
+
+## Specification
+
+Duration: 90 days from proposal execution date.
+
+Scope: DAOGovernance.sol, GovernanceToken.sol, TreasuryVault.sol (deployed addresses on record). Out of scope: front-end, off-chain infrastructure, third-party integrations.
+
+Reward tiers:
+  - Critical (fund loss, access control bypass): up to 20,000 USDC
+  - High (significant fund risk, reliable DoS): up to 10,000 USDC
+  - Medium (limited exploit requiring preconditions): up to 3,000 USDC
+  - Low / Informational: up to 500 USDC
+
+Total budget cap: 50,000 USDC drawn from the security reserve sub-account, not from the main treasury allocation.
+
+Responsible disclosure process: researchers submit findings via a designated encrypted email address. The core team has 7 days to acknowledge and 30 days to remediate before public disclosure is permitted. Disputes escalated to a 3-member security committee.
+
+No new on-chain permissions are required. No contract changes are made by this proposal. Payouts are executed manually by the multisig upon verified submission.
+
+## Success Metrics
+
+Number of valid reports filed, severity distribution, and time-to-remediation logged publicly at the end of the 90-day window.
