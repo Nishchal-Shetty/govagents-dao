@@ -285,6 +285,29 @@ accountability mechanisms are explicit.
 
 ---
 
+## Evaluation
+
+The agents were evaluated offline against five human-labeled proposals using `agents/eval.py`. The harness calls the Anthropic API without submitting any on-chain transactions and compares each agent consensus against a ground-truth label in `eval/labels.json`. Full results are in [`results/eval_run.json`](results/eval_run.json).
+
+**Result: 4/5 proposals matched the human label (80% agreement rate).**
+
+| Proposal | Consensus | Human label | Match |
+|---|---|---|---|
+| `proposal_treasury.txt` | Revise | Revise | ✓ |
+| `proposal_upgrade.txt` | Revise | Approve | ✗ |
+| `proposal_access.txt` | Approve | Approve | ✓ |
+| `proposal_bugbounty.txt` | Approve | Approve | ✓ |
+| `proposal_mintingpower.txt` | Reject | Reject | ✓ |
+
+### Key Findings
+
+- **Documentation bias.** The one miss (`proposal_upgrade.txt`) shows a systematic pattern: all three agents returned Revise on a UUPS proxy upgrade that the human evaluator treated as standard practice. The agents flagged MEV risk during migration, missing audit cost budgets, and multisig centralization — all legitimate but not blocking concerns for a well-understood upgrade pattern. The prompts reward completeness of specification over risk-adjusted confidence in the outcome, causing the system to over-flag mature proposals that omit details considered obvious by practitioners.
+- **Unanimous high-confidence rejection on clear-cut cases.** All three agents returned Reject at 95% confidence on `proposal_mintingpower.txt` (unrestricted MINT_ROLE to a single EOA). The clean sweep validates that role specialization doesn't fragment judgment when the risk is categorical.
+- **Security agent conservatism.** On two proposals (`proposal_access.txt`, `proposal_bugbounty.txt`) the Security agent voted Revise while Economic and Governance voted Approve — matching the human label. The Security agent's 10-point threat-modelling checklist creates a strong prior toward flagging any unspecified operational procedure as a revision requirement, even when those procedures are out of scope for a governance proposal.
+- **Confidence scores are poorly calibrated.** Across all five proposals, agent confidence clustered at 75 or 85; only the unanimous reject reached 95. The lower end of the 0–100 scale was never used. Confidence scores cannot meaningfully rank proposals by decision certainty or serve as weights in a confidence-weighted tally — they function more as labels than as calibrated probabilities.
+
+---
+
 ## Known Limitations
 
 - **Fixed agent count** — the contract hard-codes exactly 3 agents; changing
@@ -300,13 +323,26 @@ accountability mechanisms are explicit.
 
   | Approach | Approx. gas / vote | Notes |
   |---|---|---|
-  | Full string in storage (current) | ~450K | Fully auditable via `getVote()`; readable on-chain |
+  | Full string in storage (current) | ~430–470K (non-finalising) / ~515K (3rd vote) | Measured with 430–490 byte reasoning strings; 3rd vote includes `_finalise()` |
   | Calldata only (emit, don't store) | ~120K | Readable from event logs; not queryable from contract |
   | IPFS hash on-chain | ~80K | Cheap; requires IPFS pinning for long-term availability |
   | Off-chain sig + content hash | ~50K | Cheapest; auditability depends on signer staying available |
 
-  For a local prototype the current approach is fine. For mainnet with
-  hundreds of proposals, IPFS with on-chain content hashes is the right path.
+  Current approach costs ~1.4M gas per proposal across three votes (measured).
+  For a local prototype this is fine. For mainnet with hundreds of proposals,
+  IPFS with on-chain content hashes is the right path.
+- **Confidence calibration** — agents self-report confidence on a 0–100
+  scale with no feedback loop to ground scores in predictive accuracy.
+  In practice scores cluster at 75 and 85 regardless of actual uncertainty;
+  confidence cannot be used to rank proposals by decision quality or to
+  weight votes in a confidence-weighted tally.
+- **Security agent conservatism bias** — the Security agent's 10-point
+  threat-modelling checklist creates a prior toward flagging any unspecified
+  operational detail as a revision requirement. On two of five evaluated
+  proposals it returned Revise while the other two agents and the human
+  evaluator agreed on Approve. This is a prompt calibration issue, not a
+  reasoning failure, but it inflates the Revise rate for otherwise sound
+  proposals.
 - **No proposal expiry** — pending proposals remain open indefinitely if
   fewer than three agents vote.
 - **Local network only** — keys and addresses in `.env.example` are Hardhat

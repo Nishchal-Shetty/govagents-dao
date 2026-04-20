@@ -29,12 +29,13 @@ import argparse
 import json
 import os
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import anthropic
 from dotenv import load_dotenv
+
+from _tally import tally_consensus
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 _AGENTS_DIR = Path(__file__).resolve().parent
@@ -118,31 +119,6 @@ class _EvalAgent:
         return {"role": self.role, "recommendation": rec, "confidence": conf, "reasoning": reasoning}
 
 
-# ── Tiebreak (mirrors _derive_dry_run_consensus in runner.py) ─────────────────
-
-def _consensus(verdicts: list[dict]) -> str | None:
-    recs   = [v["recommendation"] for v in verdicts]
-    counts: dict[str, int] = Counter(recs)
-    conf:   dict[str, int] = {}
-    for v in verdicts:
-        conf[v["recommendation"]] = conf.get(v["recommendation"], 0) + v["confidence"]
-
-    max_count = max(counts.values())
-    leaders   = [r for r, c in counts.items() if c == max_count]
-    if len(leaders) == 1:
-        return leaders[0]
-
-    best_conf    = max(conf.get(r, 0) for r in leaders)
-    conf_leaders = [r for r in leaders if conf.get(r, 0) == best_conf]
-    if len(conf_leaders) == 1:
-        return conf_leaders[0]
-
-    for priority in ("Approve", "Revise", "Reject"):
-        if priority in conf_leaders:
-            return priority
-    return None
-
-
 # ── Proposal loader ────────────────────────────────────────────────────────────
 
 def _load_proposals(proposals_dir: Path) -> list[tuple[str, str, str]]:
@@ -211,7 +187,7 @@ def main() -> None:
                 print(f"ERROR: {exc}")
             continue
 
-        consensus    = _consensus(verdicts)
+        consensus    = tally_consensus(verdicts)
         label_entry  = labels.get(filename, {})
         human_label  = label_entry.get("human_recommendation")
         match        = (consensus == human_label) if human_label else None

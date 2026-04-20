@@ -61,6 +61,8 @@ from typing import Any
 from dotenv import load_dotenv
 from web3 import Web3
 
+from _tally import tally_consensus
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _AGENTS_DIR          = Path(__file__).resolve().parent
 _PROJECT_ROOT        = _AGENTS_DIR.parent
@@ -537,36 +539,15 @@ def _save_results(payload: dict[str, Any]) -> Path:
 
 
 # ── dry-run consensus helper ──────────────────────────────────────────────────
+# tally_consensus (from _tally.py) implements the shared logic; the wrapper
+# below adds the dry-run-specific < 3 votes guard before delegating.
 
 def _derive_dry_run_consensus(agent_results: list[dict]) -> str | None:
     """Mirror the on-chain _finalise tally logic in Python for dry-run mode."""
-    from collections import Counter
-
     recs = [r["recommendation"] for r in agent_results if r.get("recommendation")]
     if len(recs) < 3:
         return None
-
-    counts: dict[str, int] = Counter(recs)
-    conf:   dict[str, int] = {}
-    for r in agent_results:
-        rec = r.get("recommendation")
-        if rec:
-            conf[rec] = conf.get(rec, 0) + (r.get("confidence") or 0)
-
-    max_count = max(counts.values())
-    leaders = [rec for rec, cnt in counts.items() if cnt == max_count]
-
-    if len(leaders) == 1:
-        return leaders[0]
-
-    best_conf    = max(conf.get(rec, 0) for rec in leaders)
-    conf_leaders = [rec for rec in leaders if conf.get(rec, 0) == best_conf]
-
-    if len(conf_leaders) == 1:
-        return conf_leaders[0]
-
-    for priority in ("Approve", "Revise", "Reject"):
-        if priority in conf_leaders:
+    return tally_consensus(agent_results)
             return priority
 
     return None

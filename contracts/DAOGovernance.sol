@@ -334,8 +334,6 @@ contract DAOGovernance {
         // Final tiebreak priority: Approve (0) > Revise (2) > Reject (1)
         for (uint8 i = 0; i < tiedCount; i++) {
             if (tiedBuckets[i] == uint8(Recommendation.Approve)) return Recommendation.Approve;
-        }
-        for (uint8 i = 0; i < tiedCount; i++) {
             if (tiedBuckets[i] == uint8(Recommendation.Revise))  return Recommendation.Revise;
         }
         return Recommendation.Reject;
