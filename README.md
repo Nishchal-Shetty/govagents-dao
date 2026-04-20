@@ -312,6 +312,25 @@ accountability mechanisms are explicit.
 
 ---
 
+## Trust and Bias
+
+The most important unresolved design question: whoever deploys and registers the three agents controls what they evaluate and how. A token holder interacting with the DAO has no way to verify that those agents weren't pre-tuned to favor a particular outcome. Everything downstream of `registerAgent()` is trust-the-operator.
+
+There are two meaningful directions to address this.
+
+**Personal agent model.** Instead of a shared panel of three fixed agents, each token holder runs their own agent configured with their own preferences and delegates their vote to it. This sidesteps the centralized-operator problem entirely: I trust my agent because I configured it. It maps directly onto how liquid delegation works in existing DAOs, with an AI substituting for a human delegate. Concretely, the contract would need:
+- A `delegateAgent(address agent)` function per token holder
+- Quorum tracking across registered delegates rather than a hardcoded `MAX_AGENTS = 3`
+- Per-holder configuration storage (or an off-chain config referenced by content hash)
+
+This is the more tractable near-term path. The fixed-panel design in the current prototype is a simplification, not a deliberate architectural choice.
+
+**ZK verification of agent outputs.** A zero-knowledge proof could attest that a given model, given a specific input, produced a specific output — without revealing the full reasoning or model weights. This eliminates the trust-in-operator problem at the cost of significant computational overhead. Xia et al.'s "DAO-Agent" (December 2025) explores something adjacent using ZK proofs and Shapley-based contribution measurement. This is likely out of scope as a prototype feature but is the right long-term direction for any production deployment where agent behavior needs to be verifiable without trusting the operator.
+
+For now, the trust assumption is documented here so it's visible rather than hidden.
+
+---
+
 ## File Structure
 
 ```
