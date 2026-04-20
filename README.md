@@ -67,6 +67,21 @@ The system is designed to be fully auditable: every vote, confidence score, and 
 
 ---
 
+## Aggregation Mechanism
+
+The tiebreak scheme — majority first, then summed confidence, then fixed priority — is a practical heuristic. It's worth being explicit about what it is and isn't.
+
+Structurally it resembles a Borda-count variant: confidence scores act as partial preference weights added within each recommendation bucket. The fixed priority ordering (Approve > Revise > Reject) encodes a deliberate conservative bias — when everything is tied, the system prefers action over rejection. That's a design choice, not a neutral default, and a DAO with different risk preferences might flip it.
+
+Known weaknesses:
+- **Confidence is self-reported and uncalibrated.** There's no ground truth to validate that a score of 85 from the Economic agent means the same thing as 85 from the Security agent. The model's confidence correlates with token-level certainty, not predictive accuracy.
+- **Roles are equally weighted.** Summing confidence across Security, Economic, and Governance treats them as interchangeable. For a contract-upgrade proposal, the Security agent's concern should arguably count more. The current scheme has no way to express that.
+- **All-Revise is indistinguishable from all-Approve in the majority step.** Both produce a clear winner without hitting the tiebreak — but a unanimous Revise is a much weaker endorsement than a unanimous Approve.
+
+A more principled alternative is role-weighted aggregation: assign each role a weight based on proposal type (detected from keywords or a type field), then compute a weighted sum over recommendation scores. This would require a small contract change and a labeling step at proposal submission. It's listed in Future Improvements as "confidence-weighted tally" but the role-weighting dimension is the more important one.
+
+---
+
 ## Prerequisites
 
 | Tool | Version |
@@ -280,9 +295,18 @@ accountability mechanisms are explicit.
   different agents work correctly (separate wallets), but any agent that
   submits two transactions quickly may hit nonce race conditions without
   additional retry logic.
-- **Plain-text reasoning on-chain** — long reasoning strings increase gas
-  costs significantly (`submitProposal` for a ~1.6 kB description costs
-  ~1.35 M gas). Consider IPFS / calldata hashing for production.
+- **Plain-text reasoning on-chain** — storing full reasoning strings in
+  contract storage is expensive at scale. Gas cost breakdown and alternatives:
+
+  | Approach | Approx. gas / vote | Notes |
+  |---|---|---|
+  | Full string in storage (current) | ~450K | Fully auditable via `getVote()`; readable on-chain |
+  | Calldata only (emit, don't store) | ~120K | Readable from event logs; not queryable from contract |
+  | IPFS hash on-chain | ~80K | Cheap; requires IPFS pinning for long-term availability |
+  | Off-chain sig + content hash | ~50K | Cheapest; auditability depends on signer staying available |
+
+  For a local prototype the current approach is fine. For mainnet with
+  hundreds of proposals, IPFS with on-chain content hashes is the right path.
 - **No proposal expiry** — pending proposals remain open indefinitely if
   fewer than three agents vote.
 - **Local network only** — keys and addresses in `.env.example` are Hardhat
@@ -309,6 +333,39 @@ accountability mechanisms are explicit.
   waiting for all three to complete.
 - **Retrieval-augmented context** — give agents access to past proposals and
   their outcomes to improve reasoning consistency.
+
+---
+
+## Related Work
+
+The space of AI-augmented DAO governance has become active. The most directly relevant work:
+
+- **DAO-AI** (Capponi et al., October 2025) — tested an autonomous AI voter against 3,000+ real proposals from Compound, Uniswap, and Aave. Found that AI produces interpretable, auditable voting signals at scale and that model outputs correlate meaningfully with eventual human outcomes.
+- **QOC DAO** (Jansen and Verdot, November 2025) — proposes a stepwise framework for integrating LLM-based agents into DAO evaluation pipelines, with explicit safeguards to detect prompt manipulation and voting collusion across agents.
+- **DAO-Agent** (Xia et al., December 2025) — addresses the multi-agent coordination and verification problem using zero-knowledge proofs over LLM inference and Shapley-value-based contribution measurement to attribute decision influence across agents.
+- **StableLab AI Delegate Report** (May 2025) — practitioner survey of current AI delegate tooling deployed across major DAOs; covers integration patterns, trust assumptions, and observed failure modes.
+- **NEAR Foundation AI Digital Twins** — live program building AI agents trained on individual users' past voting history and stated preferences, effectively implementing the personal agent model described in the Trust and Bias section below.
+
+This project's contribution relative to that literature is a specific architecture: fixed specialized roles, majority-vote aggregation with a confidence-score tiebreak, and full reasoning strings stored on-chain as indexed events. The claim isn't novelty over all agent-based governance approaches — it's that this particular combination of design choices (on-chain auditability + role specialization + cryptographic agent identity) is worth studying as a concrete prototype.
+
+---
+
+## Trust and Bias
+
+The most important unresolved design question: whoever deploys and registers the three agents controls what they evaluate and how. A token holder interacting with the DAO has no way to verify that those agents weren't pre-tuned to favor a particular outcome. Everything downstream of `registerAgent()` is trust-the-operator.
+
+There are two meaningful directions to address this.
+
+**Personal agent model.** Instead of a shared panel of three fixed agents, each token holder runs their own agent configured with their own preferences and delegates their vote to it. This sidesteps the centralized-operator problem entirely: I trust my agent because I configured it. It maps directly onto how liquid delegation works in existing DAOs, with an AI substituting for a human delegate. Concretely, the contract would need:
+- A `delegateAgent(address agent)` function per token holder
+- Quorum tracking across registered delegates rather than a hardcoded `MAX_AGENTS = 3`
+- Per-holder configuration storage (or an off-chain config referenced by content hash)
+
+This is the more tractable near-term path. The fixed-panel design in the current prototype is a simplification, not a deliberate architectural choice.
+
+**ZK verification of agent outputs.** A zero-knowledge proof could attest that a given model, given a specific input, produced a specific output — without revealing the full reasoning or model weights. This eliminates the trust-in-operator problem at the cost of significant computational overhead. Xia et al.'s "DAO-Agent" (December 2025) explores something adjacent using ZK proofs and Shapley-based contribution measurement. This is likely out of scope as a prototype feature but is the right long-term direction for any production deployment where agent behavior needs to be verifiable without trusting the operator.
+
+For now, the trust assumption is documented here so it's visible rather than hidden.
 
 ---
 

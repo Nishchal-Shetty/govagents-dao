@@ -1,0 +1,22 @@
+{
+  "proposal_treasury.txt": {
+    "human_recommendation": "Revise",
+    "notes": "15% treasury allocation in one shot is too aggressive. Liquidity mining incentives are legitimate but the proposal lacks vesting schedule, performance milestones, and a circuit breaker if TVL targets aren't met. Directionally correct, needs guardrails."
+  },
+  "proposal_upgrade.txt": {
+    "human_recommendation": "Approve",
+    "notes": "Quadratic voting via UUPS proxy is a well-understood upgrade path. Proxy pattern is standard, timelock is mentioned, and the governance improvement justifies the complexity. Security surface is bounded."
+  },
+  "proposal_access.txt": {
+    "human_recommendation": "Approve",
+    "notes": "Granting emergency pause to a 3-of-5 multisig is best practice. Strictly scoped to pause only, no fund movement. Adds a meaningful safety net with appropriate key distribution."
+  },
+  "proposal_bugbounty.txt": {
+    "human_recommendation": "Approve",
+    "notes": "50K USDC cap with 90-day scope, no new on-chain permissions, standard responsible disclosure policy. Low risk, clear upside in catching vulnerabilities before they're exploited. Straightforward approval."
+  },
+  "proposal_mintingpower.txt": {
+    "human_recommendation": "Reject",
+    "notes": "Unrestricted MINT_ROLE to a single EOA with no timelock, no multisig, no cap, no expiry is a critical governance failure. This is essentially unlimited token dilution on demand from one address. Hard reject regardless of who the address belongs to."
+  }
+}

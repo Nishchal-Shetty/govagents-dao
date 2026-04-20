@@ -1,0 +1,30 @@
+Grant Unrestricted MINT_ROLE to Protocol Development Address
+
+## Summary
+
+Grant the MINT_ROLE on the governance token contract to the protocol development address (0xDev...1234) with no restrictions on amount, timing, or duration.
+
+## Motivation
+
+The protocol development team needs the ability to mint governance tokens quickly to respond to market conditions, fund new initiatives, reward contributors, and bootstrap liquidity pools as opportunities arise. Requiring a full governance vote for each minting event introduces unacceptable delays.
+
+## Specification
+
+Action: call `grantRole(MINT_ROLE, 0xDev...1234)` on GovernanceToken.sol.
+
+The granted role:
+  - Has no cap on the number of tokens that can be minted per transaction or in total.
+  - Has no timelock between grant and activation.
+  - Does not require multisig co-signature for individual mint transactions.
+  - Does not expire. Revocation requires a future governance vote.
+  - Applies to the deployed mainnet contract immediately upon proposal execution.
+
+The development address (0xDev...1234) is controlled by a single private key held by the lead developer. No hardware wallet or threshold scheme is currently in place, though the team intends to migrate to a multisig at an unspecified future date.
+
+## Rationale
+
+Agility is essential in DeFi. Competitors move faster because they retain centralised control over token supply. This proposal restores the operational flexibility needed to compete effectively.
+
+## Risks
+
+The team acknowledges that this concentrates significant power in a single address but believes the development team's track record justifies the trust.

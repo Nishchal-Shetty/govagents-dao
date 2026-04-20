@@ -448,3 +448,67 @@ contract DAOGovernance {
         return false;
     }
 }
+
+// =============================================================================
+// DESIGN NOTES — Personal Agent Model (not implemented, future direction)
+// =============================================================================
+//
+// Current problem: owner registers all 3 agents. Token holders have no way to
+// verify those agents weren't tuned to favour a particular outcome. The fixed
+// panel is a trust-the-operator assumption.
+//
+// The fix is to let each token holder delegate their vote to an agent they
+// control, then tally across delegates rather than across 3 hardcoded slots.
+//
+// Rough interface sketch:
+//
+//   mapping(address => address) public delegatedAgent;
+//   // holder => agent address they've pointed their vote at
+//
+//   mapping(address => uint256) public delegatedWeight;
+//   // agent => total token weight delegated to it (summed across holders)
+//
+//   uint256 public quorumThreshold;
+//   // min total token weight that must vote before _finalise() can run
+//   // replaces the hardcoded _registeredCount == MAX_AGENTS check
+//
+//   function delegateAgent(address agent) external {
+//       require(agent != address(0), "zero address");
+//       address prev = delegatedAgent[msg.sender];
+//       if (prev != address(0)) {
+//           delegatedWeight[prev] -= _tokenBalance(msg.sender);
+//       }
+//       delegatedAgent[msg.sender] = agent;
+//       delegatedWeight[agent] += _tokenBalance(msg.sender);
+//       emit AgentDelegated(msg.sender, agent);
+//   }
+//
+//   function revokeDelegation() external {
+//       address agent = delegatedAgent[msg.sender];
+//       require(agent != address(0), "no delegation");
+//       delegatedWeight[agent] -= _tokenBalance(msg.sender);
+//       delegatedAgent[msg.sender] = address(0);
+//       emit DelegationRevoked(msg.sender, agent);
+//   }
+//
+// submitVote() would stay mostly the same — any address whose delegatedWeight
+// is > 0 is a valid voter. _finalise() triggers when sum of voting agents'
+// delegatedWeight >= quorumThreshold instead of when voteCount == 3.
+//
+// Aggregation changes: instead of 1 vote per agent slot, each agent's vote is
+// weighted by delegatedWeight[agent]. The confidence-score tiebreak still
+// applies within each recommendation bucket.
+//
+// What this buys: each holder configures their own agent (off-chain). The
+// on-chain contract only sees wallet addresses and token weights — it doesn't
+// care what model or prompt the agent uses. No operator can unilaterally
+// control the outcome without controlling a quorum of token weight.
+//
+// Blockers before implementing:
+//   - Need a governance token contract with balanceOf() to read weights from
+//   - Snapshot vs. live balance (live balance is gameable; snapshot is safer)
+//   - What happens when a holder's balance changes after they delegated?
+//     delegatedWeight becomes stale — need a rebalance hook or periodic sync
+//   - Quorum threshold needs governance to set/change it (circular dependency
+//     if the same contract governs itself)
+// =============================================================================
