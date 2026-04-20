@@ -39,7 +39,7 @@ the runner for real use. He added the offline evaluation harness and
 human-labeled ground-truth dataset, the `--dry-run` and `--json` CLI flags,
 live verdict printing as each agent completes, automatic API retry with
 exponential backoff, and the environment-check utility. He also wrote the
-Aggregation Mechanism analysis, and Related Work survey and 
+Aggregation Mechanism analysis, Related Work survey and 
 the personal agent model design sketch in the contract.
 
 ---
@@ -59,3 +59,9 @@ the personal agent model design sketch in the contract.
   on-chain costs more than alternatives like IPFS content hashing (~80 K gas
   per vote) but makes the system fully auditable without external dependencies
   — the right tradeoff for a prototype.
+
+- **Agent confidence scores clustered narrowly at 75 and 85** regardless of
+  actual uncertainty, and the Security agent showed a consistent conservative
+  bias — returning Revise on two proposals where the other agents and human
+  evaluator agreed on Approve. Both are documented prompt calibration issues
+  rather than reasoning failures.
